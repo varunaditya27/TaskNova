@@ -97,7 +97,7 @@ tasknova/
 
 ## 🙌 Author
 
-Made with ☕ and late-night chaos by [Varun](https://github.com/<your-username>)
+Made with ☕ and late-night chaos by [Varun](https://github.com/<varunaditya27>)
 
 ---
 
