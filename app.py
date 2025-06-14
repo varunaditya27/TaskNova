@@ -4,7 +4,7 @@ from flask import Flask, request, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from dotenv import load_dotenv
-from gemini_utils import extract_task_and_time
+from gemini_utils import extract_task_plan
 import requests
 from datetime import datetime, timezone
 import dateparser
@@ -20,7 +20,7 @@ def create_app():
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    # In-memory store: {chat_id: [{id, task, run_date}...]}
+    # In-memory store: {chat_id: [{id, task, run_date, message}...]}
     tasks = {}
     scheduler = BackgroundScheduler()
     scheduler.start()
@@ -32,7 +32,6 @@ def create_app():
             logging.info(f"✅ Message sent to {chat_id}: {text}")
         except Exception as e:
             logging.error(f"🔥 Failed to send message to {chat_id}: {e}")
-
 
     @app.route("/", methods=["GET"])
     def home():
@@ -47,46 +46,51 @@ def create_app():
 
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
+        now = datetime.now(timezone.utc).astimezone()
 
-        # Extract task and time
-        parsed = extract_task_and_time(text)
+        parsed = extract_task_plan(text, now.isoformat())
         task = parsed.get("task")
-        time_str = parsed.get("time")
+        base_time_str = parsed.get("base_time")
+        reminders = parsed.get("reminders", [])
 
-        if not task or not time_str:
+        if not task or not base_time_str or not reminders:
             send_message(chat_id, "⚠️ Sorry, I couldn't understand your task/time. Try: 'Remind me to ... at ...'.")
             return jsonify(ok=True)
 
-        # Parse time to datetime
-        dt = dateparser.parse(
-            time_str,
-            settings={
-                'TIMEZONE': 'Asia/Kolkata',
-                'RETURN_AS_TIMEZONE_AWARE': True
-            }
-        )
-        if dt:
-            dt = dt.astimezone()  # Converts from IST to local (UTC on Render)
+        task_entries = []
 
-        if not dt or dt < datetime.now(timezone.utc):
-            send_message(chat_id, "⚠️ The time you provided seems invalid or in the past.")
-            return jsonify(ok=True)
+        for idx, reminder in enumerate(reminders):
+            time_str = reminder.get("time")
+            message = reminder.get("message")
+            dt = dateparser.parse(
+                time_str,
+                settings={
+                    'TIMEZONE': 'Asia/Kolkata',
+                    'RETURN_AS_TIMEZONE_AWARE': True
+                }
+            )
+            if dt:
+                dt = dt.astimezone()
+            if not dt or dt < now:
+                continue  # Skip past reminders
 
-        # Schedule job
-        job_id = f"{chat_id}_{len(tasks.get(chat_id, [])) + 1}"
-        trigger = DateTrigger(run_date=dt)
-        scheduler.add_job(
-            func=send_message,
-            trigger=trigger,
-            args=[chat_id, f"⏰ Reminder: {task}"],
-            id=job_id
-        )
+            job_id = f"{chat_id}_{len(tasks.get(chat_id, [])) + idx + 1}"
+            trigger = DateTrigger(run_date=dt)
+            scheduler.add_job(
+                func=send_message,
+                trigger=trigger,
+                args=[chat_id, message],
+                id=job_id
+            )
+            task_entries.append({"id": job_id, "task": task, "time": dt.isoformat(), "message": message})
 
-        # Store task
-        tasks.setdefault(chat_id, []).append({"id": job_id, "task": task, "time": dt.isoformat()})
+        if task_entries:
+            tasks.setdefault(chat_id, []).extend(task_entries)
+            first_dt = dateparser.parse(task_entries[0]["time"], settings={'TIMEZONE': 'UTC', 'TO_TIMEZONE': 'Asia/Kolkata'})
+            send_message(chat_id, f"✅ Task scheduled: *{task}* starting at {first_dt.strftime('%Y-%m-%d %H:%M')}.")
+        else:
+            send_message(chat_id, "⚠️ All generated reminders were in the past. Task not scheduled.")
 
-        ist_datetime = dateparser.parse(str(dt), settings={'TIMEZONE': 'UTC', 'TO_TIMEZONE': 'Asia/Kolkata'})
-        send_message(chat_id, f"✅ Task scheduled: *{task}* at {ist_datetime.strftime('%Y-%m-%d %H:%M')}.")
         return jsonify(ok=True)
 
     @app.route("/tasks", methods=["GET"])
@@ -95,7 +99,6 @@ def create_app():
         return jsonify(tasks.get(chat_id, []))
 
     return app
-
 
 if __name__ == "__main__":
     app = create_app()
