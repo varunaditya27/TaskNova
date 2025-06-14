@@ -5,10 +5,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from dotenv import load_dotenv
 from gemini_utils import extract_task_plan
+from database import DatabaseManager
 import requests
 from datetime import datetime, timezone
 import dateparser
 import pytz
+import atexit
 
 # Load environment variables
 load_dotenv()
@@ -61,7 +63,9 @@ def parse_time_string(time_str, reference_time=None):
         return convert_to_utc(parsed_dt)
     return None
 
-# Flask setup
+# Global database manager
+db = DatabaseManager()
+
 def create_app():
     app = Flask(__name__)
     logging.basicConfig(level=logging.INFO)
@@ -69,22 +73,74 @@ def create_app():
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    # In-memory store: {chat_id: [{id, task, run_date_utc, message}...]}
-    tasks = {}
-    scheduler = BackgroundScheduler(timezone=UTC)  # Scheduler runs in UTC
+    # Initialize scheduler
+    scheduler = BackgroundScheduler(timezone=UTC)
     scheduler.start()
+    
+    # Register cleanup function
+    atexit.register(lambda: scheduler.shutdown())
 
-    def send_message(chat_id: int, text: str):
+    def send_message(chat_id: int, text: str, job_id: str = None):
+        """
+        Send message via Telegram and mark reminder as sent in database
+        """
         try:
             response = requests.post(TELEGRAM_URL, json={"chat_id": chat_id, "text": text})
             response.raise_for_status()
             logging.info(f"✅ Message sent to {chat_id}: {text}")
+            
+            # Mark reminder as sent in database
+            if job_id:
+                db.mark_reminder_sent(job_id)
+                logging.info(f"✅ Reminder {job_id} marked as sent in database")
+                
         except Exception as e:
             logging.error(f"🔥 Failed to send message to {chat_id}: {e}")
 
+    def restore_scheduled_jobs():
+        """
+        Restore all pending reminders from database on startup
+        This is crucial for persistence across server restarts
+        """
+        try:
+            pending_reminders = db.get_pending_reminders()
+            now_utc = get_current_time_utc()
+            restored_count = 0
+            
+            for reminder in pending_reminders:
+                reminder_time_utc = dateparser.parse(reminder['reminder_time_utc'])
+                
+                # Skip past reminders
+                if reminder_time_utc <= now_utc:
+                    logging.info(f"Skipping past reminder: {reminder['job_id']}")
+                    continue
+                
+                try:
+                    trigger = DateTrigger(run_date=reminder_time_utc)
+                    scheduler.add_job(
+                        func=send_message,
+                        trigger=trigger,
+                        args=[reminder['chat_id'], reminder['message'], reminder['job_id']],
+                        id=reminder['job_id']
+                    )
+                    restored_count += 1
+                    logging.info(f"✅ Restored job: {reminder['job_id']}")
+                    
+                except Exception as e:
+                    logging.error(f"Failed to restore job {reminder['job_id']}: {e}")
+            
+            logging.info(f"🔄 Restored {restored_count} scheduled reminders from database")
+            
+        except Exception as e:
+            logging.error(f"Failed to restore jobs from database: {e}")
+
+    # Restore jobs on startup
+    restore_scheduled_jobs()
+
     @app.route("/", methods=["GET"])
     def home():
-        return "TaskNova is running!"
+        stats = db.get_database_stats()
+        return f"TaskNova is running! Database stats: {stats}"
 
     @app.route("/webhook", methods=["POST"])
     def webhook():
@@ -97,6 +153,41 @@ def create_app():
 
             chat_id = data["message"]["chat"]["id"]
             text = data["message"].get("text", "")
+            
+            # Handle special commands
+            if text.lower() in ['/start', '/help']:
+                help_msg = (
+                    "🤖 Welcome to TaskNova!\n\n"
+                    "I'm your AI-powered reminder assistant. Just tell me what you need to remember:\n\n"
+                    "Examples:\n"
+                    "• 'Remind me to submit assignment by 8 PM'\n"
+                    "• 'Call mom in 30 minutes'\n"
+                    "• 'Meeting preparation tomorrow at 2 PM'\n\n"
+                    "I'll create smart multiple reminders to keep you on track! 🎯"
+                )
+                send_message(chat_id, help_msg)
+                return jsonify(ok=True)
+            
+            if text.lower() == '/mystasks':
+                user_tasks = db.get_user_tasks(chat_id, limit=5)
+                if not user_tasks:
+                    send_message(chat_id, "📋 You have no active tasks.")
+                else:
+                    msg = "📋 Your Recent Tasks:\n\n"
+                    for task in user_tasks:
+                        base_time = dateparser.parse(task['base_time'])
+                        if base_time:
+                            base_time_user = convert_to_user_tz(base_time)
+                            time_str = base_time_user.strftime('%Y-%m-%d %I:%M %p IST')
+                        else:
+                            time_str = "Time not available"
+                        
+                        msg += f"• {task['task_description']}\n"
+                        msg += f"  ⏰ Due: {time_str}\n"
+                        msg += f"  📊 Reminders: {task['sent_reminders']}/{task['total_reminders']} sent\n\n"
+                    
+                send_message(chat_id, msg)
+                return jsonify(ok=True)
             
             # Get current time in user timezone for context
             now_user_tz = get_current_time_in_user_tz()
@@ -126,13 +217,13 @@ def create_app():
                     continue  # Skip past reminders
 
                 try:
-                    job_id = f"{chat_id}_{len(tasks.get(chat_id, [])) + idx + 1}"
+                    job_id = f"{chat_id}_{int(now_utc.timestamp())}_{idx}"
                     trigger = DateTrigger(run_date=dt_utc)  # Schedule in UTC
                     
                     scheduler.add_job(
                         func=send_message,
                         trigger=trigger,
-                        args=[chat_id, message],
+                        args=[chat_id, message, job_id],
                         id=job_id
                     )
                     
@@ -149,9 +240,20 @@ def create_app():
                     continue
 
             if task_entries:
-                tasks.setdefault(chat_id, []).extend(task_entries)
+                # Save to database BEFORE sending confirmation
+                try:
+                    task_id = db.save_task_with_reminders(
+                        chat_id=chat_id,
+                        task_description=task,
+                        base_time=base_time_str,
+                        reminder_entries=task_entries
+                    )
+                    logging.info(f"✅ Task {task_id} saved to database with {len(task_entries)} reminders")
+                except Exception as e:
+                    logging.error(f"Failed to save task to database: {e}")
+                    send_message(chat_id, "⚠️ Task scheduled but couldn't save to database. Reminders may not persist across restarts.")
                 
-                # Show first reminder time in user timezone
+                # Show confirmation to user
                 first_reminder_utc = dateparser.parse(task_entries[0]["time_utc"])
                 first_reminder_user = convert_to_user_tz(first_reminder_utc)
                 
@@ -164,7 +266,8 @@ def create_app():
                 response_msg = (
                     f"✅ Task scheduled: *{task}*\n"
                     f"🕒 Reminders at: {', '.join(reminder_times)}\n"
-                    f"📅 Starting: {first_reminder_user.strftime('%Y-%m-%d %I:%M %p IST')}"
+                    f"📅 Starting: {first_reminder_user.strftime('%Y-%m-%d %I:%M %p IST')}\n\n"
+                    f"💾 Saved to database - will persist across restarts!"
                 )
                 send_message(chat_id, response_msg)
             else:
@@ -179,19 +282,22 @@ def create_app():
     @app.route("/tasks", methods=["GET"])
     def list_tasks():
         chat_id = int(request.args.get("chat_id", 0))
-        user_tasks = tasks.get(chat_id, [])
-        
-        # Convert times to user timezone for display
-        display_tasks = []
-        for task in user_tasks:
-            task_copy = task.copy()
-            if 'time_utc' in task_copy:
-                utc_time = dateparser.parse(task_copy['time_utc'])
-                user_time = convert_to_user_tz(utc_time)
-                task_copy['time_display'] = user_time.strftime('%Y-%m-%d %I:%M %p IST')
-            display_tasks.append(task_copy)
-            
-        return jsonify(display_tasks)
+        user_tasks = db.get_user_tasks(chat_id)
+        return jsonify(user_tasks)
+    
+    @app.route("/stats", methods=["GET"])
+    def stats():
+        """Database statistics endpoint"""
+        return jsonify(db.get_database_stats())
+    
+    @app.route("/cleanup", methods=["POST"])
+    def cleanup_old_tasks():
+        """Manual cleanup endpoint"""
+        try:
+            db.cleanup_old_tasks(days_old=7)
+            return jsonify({"status": "success", "message": "Old tasks cleaned up"})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
 
     @app.teardown_appcontext
     def cleanup(error):
