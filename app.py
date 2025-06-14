@@ -6,7 +6,7 @@ from apscheduler.triggers.date import DateTrigger
 from dotenv import load_dotenv
 from gemini_utils import extract_task_and_time
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 import dateparser
 
 # Load environment variables
@@ -68,7 +68,7 @@ def create_app():
         if dt:
             dt = dt.astimezone()  # Converts from IST to local (UTC on Render)
 
-        if not dt or dt < datetime.now():
+        if not dt or dt < datetime.now(timezone.utc):
             send_message(chat_id, "⚠️ The time you provided seems invalid or in the past.")
             return jsonify(ok=True)
 
