@@ -17,9 +17,11 @@ def extract_task_and_time(user_input: str) -> dict:
         "contents": [{
             "parts": [{
                 "text": (
-                    f"Extract the task and time from this message and reply ONLY with valid JSON.\n"
-                    f"Return JSON with keys 'task' and 'time'.\n"
-                    f"If unable to parse, return {{'task': '', 'time': ''}}.\n\n"
+                    "Extract the task and time from the message below. "
+                    "Reply ONLY with a JSON object like this:\n"
+                    "{\"task\": \"...\", \"time\": \"...\"}\n"
+                    "If not possible, reply with: {\"task\": \"\", \"time\": \"\"}\n"
+                    "DO NOT include any explanation or formatting.\n\n"
                     f"Message: '{user_input}'"
                 )
             }]
