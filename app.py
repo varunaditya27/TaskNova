@@ -48,7 +48,7 @@ def create_app():
         text = data["message"].get("text", "")
         now = datetime.now(timezone.utc).astimezone()
 
-        parsed = extract_task_plan(text, now.isoformat())
+        parsed = extract_task_plan(text, now)
         task = parsed.get("task")
         base_time_str = parsed.get("base_time")
         reminders = parsed.get("reminders", [])
