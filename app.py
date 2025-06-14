@@ -85,7 +85,8 @@ def create_app():
         # Store task
         tasks.setdefault(chat_id, []).append({"id": job_id, "task": task, "time": dt.isoformat()})
 
-        send_message(chat_id, f"✅ Task scheduled: *{task}* at {dt.strftime('%Y-%m-%d %H:%M')}.")
+        ist_datetime = dateparser.parse(str(dt), settings={'TIMEZONE': 'UTC', 'TO_TIMEZONE': 'Asia/Kolkata'})
+        send_message(chat_id, f"✅ Task scheduled: *{task}* at {ist_datetime.strftime('%Y-%m-%d %H:%M')}.")
         return jsonify(ok=True)
 
     @app.route("/tasks", methods=["GET"])
