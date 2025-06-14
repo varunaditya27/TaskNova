@@ -1,28 +1,35 @@
-# 🤖 TaskNova — Your AI-Powered Telegram Task Reminder Bot
+# 🤖 TaskNova — Your AI-Powered Smart Reminder Agent
 
-**TaskNova** is your smart, snappy task companion that turns your casual thoughts like:
+**TaskNova** is no longer just a reminder bot — it's your personal productivity agent powered by Google Gemini.
+It doesn't just set a timer. It thinks. It plans. It adapts.
 
-> "Remind me to revise Unit 3 before 6 PM tomorrow"
+Say something like:
 
-...into actionable, scheduled tasks with a little help from Google Gemini.
+> "Remind me to complete my lab report before 8 PM tonight"
 
-Talk like a human, get reminded like a boss.
+...and TaskNova will:
+
+* Figure out what you need to do
+* When you need to do it
+* And intelligently schedule **multiple reminders** so you don't slack off or forget.
 
 ---
 
 ## 🧠 What It Does
 
-* Understands natural task instructions (LLM-powered)
-* Extracts the **task** and **time**
-* Confirms with the user
-* \[Coming Soon] Sends reminder notifications
-* Works right inside Telegram
+* Parses natural language using **Gemini Pro**
+* Extracts **task**, **deadline**, and plans **smart reminders**
+* Schedules and sends reminders through **Telegram**
+* Sends multiple nudges depending on task urgency (short/long deadlines)
+* Handles vague times like "in 10 minutes" or "tomorrow evening"
+* Super simple chat interface — no apps, no clutter
 
 ---
 
 ## 🛠 Tech Stack
 
 * Python + Flask
+* APScheduler for job scheduling
 * Telegram Bot API
 * Google Gemini Pro API (via Google AI Studio)
 * Hosted on [Render](https://render.com/)
@@ -66,14 +73,19 @@ Your Flask server will run at `http://localhost:5000`
 ## 🌐 Deploying on Render
 
 1. Push this repo to GitHub
+
 2. Create a Web Service on Render
+
 3. Connect your GitHub repo
+
 4. Set build/start commands:
 
    * Build Command: `pip install -r requirements.txt`
    * Start Command: `python app.py`
-5. Add environment variables (`BOT_TOKEN`, `GEMINI_API_KEY`) in the dashboard
-6. Set webhook using:
+
+5. Add environment variables (`BOT_TOKEN`, `GEMINI_API_KEY`) in Render's dashboard
+
+6. Set your Telegram webhook using:
 
 ```bash
 curl -X POST https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook \
@@ -86,21 +98,43 @@ curl -X POST https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook \
 
 ```
 tasknova/
-├── app.py            # Flask app
-├── gemini_utils.py   # Gemini LLM logic
-├── requirements.txt  # Python deps
-├── render.yaml       # Render config (optional)
-└── .env              # Your secret sauce
+├── app.py              # Flask app
+├── gemini_utils.py     # Handles Gemini API requests & smart planning
+├── requirements.txt    # Python dependencies
+├── render.yaml         # Optional: Render deployment config
+└── .env                # Secrets (never commit this!)
 ```
+
+---
+
+## ⚡️ Example Interaction
+
+> You: *"Remind me to revise DBMS unit 2 by 10 PM today"*
+
+> Gemini thinks, calculates: "This is urgent. Let's send 3 reminders: 30 min before, 10 min before, and at the deadline."
+
+> Bot:
+
+```
+✅ Task scheduled: Revise DBMS unit 2
+🕒 Reminders will be sent at:
+- 9:30 PM
+- 9:50 PM
+- 10:00 PM
+```
+
+> You: *"Set a reminder to water plants in 10 minutes"*
+
+> Bot: *"✅ Got it! Smart reminder set."*
 
 ---
 
 ## 🙌 Author
 
-Made with ☕ and late-night chaos by [Varun](https://github.com/<varunaditya27>)
+Crafted with caffeine, memes, and Gemini by [Varun](https://github.com/varunaditya27)
 
 ---
 
 ## 📜 License
 
-MIT — Use it, fork it, enhance it. Just don’t forget to give credit if it helps.
+MIT — Use it, fork it, modify it, build something cooler with it. Just give credit where it's due. 😎
