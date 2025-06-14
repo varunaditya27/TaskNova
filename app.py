@@ -26,7 +26,13 @@ def create_app():
     scheduler.start()
 
     def send_message(chat_id: int, text: str):
-        requests.post(TELEGRAM_URL, json={"chat_id": chat_id, "text": text})
+        try:
+            response = requests.post(TELEGRAM_URL, json={"chat_id": chat_id, "text": text})
+            response.raise_for_status()
+            logging.info(f"✅ Message sent to {chat_id}: {text}")
+        except Exception as e:
+            logging.error(f"🔥 Failed to send message to {chat_id}: {e}")
+
 
     @app.route("/", methods=["GET"])
     def home():
@@ -52,7 +58,16 @@ def create_app():
             return jsonify(ok=True)
 
         # Parse time to datetime
-        dt = dateparser.parse(time_str)
+        dt = dateparser.parse(
+            time_str,
+            settings={
+                'TIMEZONE': 'Asia/Kolkata',
+                'RETURN_AS_TIMEZONE_AWARE': True
+            }
+        )
+        if dt:
+            dt = dt.astimezone()  # Converts from IST to local (UTC on Render)
+
         if not dt or dt < datetime.now():
             send_message(chat_id, "⚠️ The time you provided seems invalid or in the past.")
             return jsonify(ok=True)
