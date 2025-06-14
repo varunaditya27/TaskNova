@@ -1,5 +1,6 @@
-Flask
-requests
-python-dotenv
-google-genai
-APScheduler
+Flask~=3.1.0
+requests~=2.32.3
+python-dotenv~=1.1.0
+google-genai~=0.8.0
+APScheduler~=3.11.0
+dateparser~=1.2.0
