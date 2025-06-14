@@ -28,14 +28,21 @@ def extract_task_and_time(user_input: str) -> dict:
     try:
         resp = requests.post(url, json=prompt, headers=headers, timeout=10)
         resp.raise_for_status()
-        text = resp.json()["candidates"][0]["content"]["parts"][0]
-        # Parse JSON safely
-        data = text.get("text") if isinstance(text, dict) else text
-        result = json.loads(data)
+        raw = resp.json()
+        try:
+            text_block = raw["candidates"][0]["content"]["parts"][0]
+            text = text_block["text"] if isinstance(text_block, dict) else text_block
+            print("🔍 Gemini returned text:", text)
+            result = json.loads(text)
+        except (json.JSONDecodeError, KeyError) as e:
+            print("⚠️ Error decoding Gemini response:", e)
+            return {"task": "", "time": ""}
+
         return {
             "task": result.get("task", "").strip(),
             "time": result.get("time", "").strip()
         }
+
     except Exception as e:
         print("Gemini parsing error:", e)
         return {"task": "", "time": ""}
