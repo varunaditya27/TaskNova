@@ -17,7 +17,7 @@ Chat with TaskNova on Telegram:
 
 ## 🧠 What It Does
 
-* Parses natural language using **Gemini Pro**
+* Parses natural language using **Gemini 2.0 Flash**
 * Extracts **task**, **deadline**, and plans **smart reminders**
 * Schedules and sends reminders through **Telegram Bot**
 * Sends multiple nudges depending on task urgency (short/long deadlines)
