@@ -1,9 +1,9 @@
-# 🤖 TaskNova — Your AI-Powered Smart Reminder Agent
+# 🤖 TaskNova — Your AI-Powered Telegram Smart Reminder Bot
 
-**TaskNova** is no longer just a reminder bot — it's your personal productivity agent powered by Google Gemini.
+**TaskNova** is a Telegram bot that goes beyond simple reminders — it's your personal productivity agent powered by Google Gemini.
 It doesn't just set a timer. It thinks. It plans. It adapts.
 
-Say something like:
+Chat with TaskNova on Telegram:
 
 > "Remind me to complete my lab report before 8 PM tonight"
 
@@ -19,10 +19,10 @@ Say something like:
 
 * Parses natural language using **Gemini Pro**
 * Extracts **task**, **deadline**, and plans **smart reminders**
-* Schedules and sends reminders through **Telegram**
+* Schedules and sends reminders through **Telegram Bot**
 * Sends multiple nudges depending on task urgency (short/long deadlines)
 * Handles vague times like "in 10 minutes" or "tomorrow evening"
-* Super simple chat interface — no apps, no clutter
+* Super simple chat interface — no apps, no clutter, just Telegram
 
 ---
 
@@ -66,25 +66,19 @@ GEMINI_API_KEY=your_gemini_api_key
 python app.py
 ```
 
-Your Flask server will run at `http://localhost:5000`
+Your Flask server will run at `http://localhost:5000` and listen for Telegram webhook events.
 
 ---
 
 ## 🌐 Deploying on Render
 
 1. Push this repo to GitHub
-
 2. Create a Web Service on Render
-
 3. Connect your GitHub repo
-
 4. Set build/start commands:
-
    * Build Command: `pip install -r requirements.txt`
    * Start Command: `python app.py`
-
 5. Add environment variables (`BOT_TOKEN`, `GEMINI_API_KEY`) in Render's dashboard
-
 6. Set your Telegram webhook using:
 
 ```bash
@@ -98,7 +92,7 @@ curl -X POST https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook \
 
 ```
 tasknova/
-├── app.py              # Flask app
+├── app.py              # Flask app (Telegram webhook handler)
 ├── gemini_utils.py     # Handles Gemini API requests & smart planning
 ├── requirements.txt    # Python dependencies
 ├── render.yaml         # Optional: Render deployment config
@@ -109,7 +103,7 @@ tasknova/
 
 ## ⚡️ Example Interaction
 
-> You: *"Remind me to revise DBMS unit 2 by 10 PM today"*
+> You (on Telegram): *"Remind me to revise DBMS unit 2 by 10 PM today"*
 
 > Gemini thinks, calculates: "This is urgent. Let's send 3 reminders: 30 min before, 10 min before, and at the deadline."
 
