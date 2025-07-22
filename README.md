@@ -41,7 +41,7 @@ Chat with TaskNova on Telegram:
 ### 1. Clone the Repo
 
 ```bash
-git clone https://github.com/<your-username>/tasknova.git
+git clone https://github.com/varunaditya27/tasknova.git
 cd tasknova
 ```
 
