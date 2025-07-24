@@ -306,6 +306,9 @@ def create_app():
 
     return app
 
+# Create the app instance for Gunicorn to find
+app = create_app()
+
 if __name__ == "__main__":
-    app = create_app()
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    # Only used for local development
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
