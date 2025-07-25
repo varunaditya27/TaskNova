@@ -266,8 +266,8 @@ class DatabaseManager:
             ''')
             
             # Delete very old completed tasks (preserve analytics data for recent tasks)
-            cutoff_date = datetime.utcnow().replace(microsecond=0)
-            cutoff_date = cutoff_date.replace(day=cutoff_date.day - days_old)
+            from datetime import timedelta
+            cutoff_date = datetime.utcnow() - timedelta(days=days_old)
             
             cursor.execute('''
                 DELETE FROM tasks 
