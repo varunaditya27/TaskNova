@@ -3,11 +3,12 @@ import logging
 from flask import Flask, request, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from dotenv import load_dotenv
 from gemini_utils import extract_task_plan
 from database import DatabaseManager
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import dateparser
 import pytz
 import atexit
@@ -71,11 +72,27 @@ def create_app():
     logging.basicConfig(level=logging.INFO)
 
     BOT_TOKEN = os.getenv("BOT_TOKEN")
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN environment variable is required")
+    
     TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     # Initialize scheduler
     scheduler = BackgroundScheduler(timezone=UTC)
+    
+    # Add error listener for scheduler
+    def job_listener(event):
+        if event.exception:
+            logging.error(f"❌ Scheduler job {event.job_id} crashed: {event.exception}")
+        else:
+            logging.info(f"✅ Scheduler job {event.job_id} executed successfully")
+    
+    scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
     scheduler.start()
+    
+    logging.info(f"🚀 Scheduler started with timezone: {scheduler.timezone}")
+    logging.info(f"📊 Scheduler state: {scheduler.state}")
+    logging.info(f"🔄 Scheduler running: {scheduler.running}")
     
     # Register cleanup function
     atexit.register(lambda: scheduler.shutdown())
@@ -86,6 +103,9 @@ def create_app():
         Enhanced with better formatting and error handling
         """
         try:
+            logging.info(f"🚀 EXECUTING REMINDER: Sending to chat_id {chat_id}, job_id: {job_id}")
+            logging.info(f"📨 Message content: {text[:100]}...")
+            
             response = requests.post(TELEGRAM_URL, json={
                 "chat_id": chat_id, 
                 "text": text,
@@ -126,7 +146,14 @@ def create_app():
             skipped_count = 0
             
             for reminder in pending_reminders:
-                reminder_time_utc = dateparser.parse(reminder['reminder_time_utc'])
+                reminder_time_utc = dateparser.parse(
+                    reminder['reminder_time_utc'],
+                    settings={'TIMEZONE': 'UTC', 'RETURN_AS_TIMEZONE_AWARE': True}
+                )
+                
+                if not reminder_time_utc:
+                    logging.error(f"Failed to parse reminder time: {reminder['reminder_time_utc']}")
+                    continue
                 
                 # Skip past reminders
                 if reminder_time_utc <= now_utc:
@@ -136,17 +163,20 @@ def create_app():
                 
                 try:
                     trigger = DateTrigger(run_date=reminder_time_utc)
-                    scheduler.add_job(
+                    job = scheduler.add_job(
                         func=send_message,
                         trigger=trigger,
                         args=[reminder['chat_id'], reminder['message'], reminder['job_id']],
-                        id=reminder['job_id']
+                        id=reminder['job_id'],
+                        replace_existing=True
                     )
                     restored_count += 1
-                    logging.info(f"✅ Restored {reminder.get('reminder_type', 'STANDARD')} job: {reminder['job_id']}")
+                    logging.info(f"✅ Restored {reminder.get('reminder_type', 'STANDARD')} job: {reminder['job_id']} for {reminder_time_utc}")
                     
                 except Exception as e:
                     logging.error(f"Failed to restore job {reminder['job_id']}: {e}")
+                    logging.error(f"  Reminder time: {reminder['reminder_time_utc']}")
+                    logging.error(f"  Parsed time: {reminder_time_utc}")
             
             logging.info(f"🔄 Restored {restored_count} scheduled reminders, skipped {skipped_count} past reminders")
             
@@ -155,6 +185,18 @@ def create_app():
 
     # Restore jobs on startup
     restore_scheduled_jobs()
+    
+    # Add immediate test job to verify scheduler is working
+    def test_scheduler():
+        logging.info("🔥 SCHEDULER TEST: This message proves the scheduler is working!")
+    
+    test_time = get_current_time_utc() + timedelta(seconds=30)
+    scheduler.add_job(
+        func=test_scheduler,
+        trigger=DateTrigger(run_date=test_time),
+        id="scheduler_test"
+    )
+    logging.info(f"🧪 Added test job to run at {test_time} UTC")
 
     @app.route("/", methods=["GET"])
     def home():
@@ -225,7 +267,10 @@ def create_app():
                 else:
                     msg = "📋 *Your Recent Tasks (AI-Enhanced):*\n\n"
                     for task in user_tasks:
-                        base_time = dateparser.parse(task['base_time'])
+                        base_time = dateparser.parse(
+                            task['base_time'],
+                            settings={'RETURN_AS_TIMEZONE_AWARE': True}
+                        )
                         if base_time:
                             base_time_user = convert_to_user_tz(base_time)
                             time_str = base_time_user.strftime('%Y-%m-%d %I:%M %p IST')
@@ -334,7 +379,9 @@ def create_app():
             now_utc = get_current_time_utc()
             
             # Enhanced AI processing with legendary prompt
+            logging.info(f"🤖 Processing request from chat_id {chat_id}: '{text}'")
             parsed = extract_task_plan(text, now_user_tz)
+            logging.info(f"🧠 Gemini response - Task: '{parsed.get('task')}', Base time: '{parsed.get('base_time')}', Reminders: {len(parsed.get('reminders', []))}")
             task = parsed.get("task")
             base_time_str = parsed.get("base_time")
             reminders = parsed.get("reminders", [])
@@ -370,23 +417,43 @@ def create_app():
                 reminder_type = reminder.get("type", "STANDARD")
                 priority = reminder.get("priority", "medium")
                 
+                if not time_str or not message:
+                    logging.warning(f"Skipping invalid reminder - time: '{time_str}', message: '{message}'")
+                    continue
+                
                 # Parse reminder time consistently
                 dt_utc = parse_time_string(time_str, now_user_tz)
                 
-                if not dt_utc or dt_utc < now_utc:
-                    logging.warning(f"Skipping past reminder: {time_str}")
+                if not dt_utc:
+                    logging.error(f"Failed to parse reminder time: '{time_str}'")
+                    continue
+                    
+                if dt_utc < now_utc:
+                    logging.warning(f"Skipping past reminder: {time_str} (parsed as {dt_utc})")
                     continue  # Skip past reminders
 
                 try:
                     job_id = f"{chat_id}_{int(now_utc.timestamp())}_{idx}"
                     trigger = DateTrigger(run_date=dt_utc)  # Schedule in UTC
                     
-                    scheduler.add_job(
+                    # Add job with better error handling
+                    job = scheduler.add_job(
                         func=send_message,
                         trigger=trigger,
                         args=[chat_id, message, job_id],
-                        id=job_id
+                        id=job_id,
+                        replace_existing=True  # Replace if job with same ID exists
                     )
+                    
+                    logging.info(f"✅ Scheduled job {job_id} for {dt_utc} UTC ({convert_to_user_tz(dt_utc)} IST)")
+                    logging.info(f"📋 Current scheduler has {len(scheduler.get_jobs())} total jobs")
+                    
+                    # Immediate test: Check if job was actually added
+                    added_job = scheduler.get_job(job_id)
+                    if added_job:
+                        logging.info(f"🎯 Job {job_id} confirmed in scheduler. Next run: {added_job.next_run_time}")
+                    else:
+                        logging.error(f"❌ Job {job_id} NOT found in scheduler after adding!")
                     
                     task_entries.append({
                         "id": job_id, 
@@ -422,16 +489,23 @@ def create_app():
                     send_message(chat_id, "⚠️ Task scheduled but couldn't save to database. Reminders may not persist across restarts.")
                 
                 # Enhanced confirmation message with AI insights
-                first_reminder_utc = dateparser.parse(task_entries[0]["time_utc"])
+                first_reminder_utc = dateparser.parse(
+                    task_entries[0]["time_utc"],
+                    settings={'TIMEZONE': 'UTC', 'RETURN_AS_TIMEZONE_AWARE': True}
+                )
                 first_reminder_user = convert_to_user_tz(first_reminder_utc)
                 
                 reminder_times = []
                 reminder_types = []
                 for entry in task_entries:
-                    entry_utc = dateparser.parse(entry["time_utc"])
-                    entry_user = convert_to_user_tz(entry_utc)
-                    reminder_times.append(entry_user.strftime('%I:%M %p'))
-                    reminder_types.append(entry.get('type', 'STANDARD'))
+                    entry_utc = dateparser.parse(
+                        entry["time_utc"],
+                        settings={'TIMEZONE': 'UTC', 'RETURN_AS_TIMEZONE_AWARE': True}
+                    )
+                    if entry_utc:
+                        entry_user = convert_to_user_tz(entry_utc)
+                        reminder_times.append(entry_user.strftime('%I:%M %p'))
+                        reminder_types.append(entry.get('type', 'STANDARD'))
                 
                 # Build enhanced confirmation with AI metadata
                 urgency_emoji = {
@@ -546,6 +620,60 @@ def create_app():
                 "message": str(e),
                 "ai_error_analysis": "Database cleanup failed"
             })
+
+    @app.route("/debug/jobs", methods=["GET"])
+    def debug_jobs():
+        """Debug endpoint to check scheduled jobs"""
+        try:
+            jobs = scheduler.get_jobs()
+            job_info = []
+            
+            for job in jobs:
+                job_info.append({
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run_time": str(job.next_run_time),
+                    "trigger": str(job.trigger),
+                    "func": str(job.func),
+                    "args": str(job.args)
+                })
+            
+            return jsonify({
+                "total_jobs": len(jobs),
+                "scheduler_running": scheduler.running,
+                "scheduler_state": str(scheduler.state),
+                "jobs": job_info
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/test", methods=["GET"])
+    def test_endpoint():
+        """Test endpoint to verify bot functionality"""
+        try:
+            test_chat_id = request.args.get("chat_id")
+            if test_chat_id:
+                # Send a test message
+                test_message = "🔥 TaskNova test message - Bot is operational! 🚀"
+                send_message(int(test_chat_id), test_message)
+                return jsonify({
+                    "status": "success",
+                    "message": "Test message sent",
+                    "bot_token_configured": bool(BOT_TOKEN),
+                    "gemini_key_configured": bool(os.getenv("GEMINI_API_KEY"))
+                })
+            else:
+                return jsonify({
+                    "status": "info",
+                    "message": "Add ?chat_id=YOUR_CHAT_ID to test messaging",
+                    "bot_token_configured": bool(BOT_TOKEN),
+                    "gemini_key_configured": bool(os.getenv("GEMINI_API_KEY"))
+                })
+        except Exception as e:
+            return jsonify({
+                "status": "error",
+                "error": str(e)
+            }), 500
 
     @app.route("/health", methods=["GET"])
     def health_check():
