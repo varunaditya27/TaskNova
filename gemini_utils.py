@@ -31,6 +31,18 @@ def extract_task_plan(user_input: str, current_time: datetime) -> dict:
     }
     """
     api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("ERROR: GEMINI_API_KEY environment variable is required")
+        return {
+            "task": "", 
+            "base_time": "", 
+            "urgency_level": "MEDIUM",
+            "task_category": "GENERAL",
+            "estimated_duration": 30,
+            "reminders": [],
+            "motivational_context": "",
+            "procrastination_shield": False
+        }
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     headers = {
         "Content-Type": "application/json",
@@ -212,6 +224,8 @@ def extract_task_plan(user_input: str, current_time: datetime) -> dict:
         resp = requests.post(url, json=prompt, headers=headers, timeout=20)
         resp.raise_for_status()
         raw = resp.json()
+        
+        print("🔍 Full Gemini response:", json.dumps(raw, indent=2))
 
         # Handle Gemini response format
         if "candidates" in raw and len(raw["candidates"]) > 0:
@@ -245,17 +259,24 @@ def extract_task_plan(user_input: str, current_time: datetime) -> dict:
                     "procrastination_shield": result.get("procrastination_shield", False)
                 }
             else:
-                print("No parts in Gemini response content")
+                print("❌ No parts in Gemini response content")
+                print(f"Content structure: {content}")
         else:
-            print("No candidates in Gemini response")
+            print("❌ No candidates in Gemini response")
+            print(f"Response structure: {raw}")
 
     except json.JSONDecodeError as e:
-        print(f"JSON parsing error: {e}")
-        print(f"Raw text: {text if 'text' in locals() else 'No text available'}")
+        print(f"❌ JSON parsing error: {e}")
+        print(f"Raw text being parsed: {text if 'text' in locals() else 'No text available'}")
     except requests.exceptions.RequestException as e:
-        print(f"Gemini API request error: {e}")
+        print(f"❌ Gemini API request error: {e}")
+        if hasattr(e, 'response') and e.response:
+            print(f"Response status: {e.response.status_code}")
+            print(f"Response text: {e.response.text}")
     except Exception as e:
-        print(f"Gemini smart planning error: {e}")
+        print(f"❌ Unexpected Gemini error: {e}")
+        import traceback
+        traceback.print_exc()
 
     # Return empty result on any error with new structure
     return {
